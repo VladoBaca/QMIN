@@ -3,8 +3,7 @@ from torch import nn
 from torch.utils.data import Dataset, DataLoader
 import pandas as pd
 
-from qmin import utils
-from qmin.utils import used_device
+from utils import used_device
 
 # full = pd.read_csv("../datasets/mice/full.csv")
 # train, val = train_test_split(full, test_size=0.15)

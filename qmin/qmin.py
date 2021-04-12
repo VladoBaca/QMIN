@@ -117,7 +117,15 @@ def fill_counts_for_layer_pair(quantized_layer_1: torch.ByteTensor, quantized_la
             count_table[prev_i][next_i][prev_val.item()][next_val.item()] += 1
 
 
-def compute_neighbours_qmin(network, data, quantization_degree=2, input_bound_low=None, input_bound_up=None) -> None:
+# def get_qmin_tables(shape: list[int]) -> list[torch.FloatTensor]:
+#     qmin_tables = []
+#     for i in range(len(shape) - 1):
+#         qmin_tables.append(torch.zeros([shape[i], shape[i + 1]], dtype=torch.float, device=used_device())
+#                            .type(torch.FloatTensor))
+#     return qmin_tables
+
+# TODO VB add types!!
+def compute_neighbours_qmin(network, data, quantization_degree=2, input_bound_low=None, input_bound_up=None):
     modules_flat = flatten_module(network)
     shape = get_shape(modules_flat)
     count_tables = get_count_tables(shape, quantization_degree)
@@ -130,3 +138,32 @@ def compute_neighbours_qmin(network, data, quantization_degree=2, input_bound_lo
     fill_count_tables(data, modules_flat, count_tables, quantization_degree, input_bound_low, input_bound_up)
 
     # TODO VB here finish the mutual information
+    # foreach layerpair
+    # Divide by sum!!!
+    # compute marginals
+    # for each cell, compute the term, add to the sum
+
+    qmin_tables = []
+
+    # TODO VB debug this
+    # TODO VB either do this on CPU or use some kind of map for the inner computation?
+    # or, probably use a sophisticated composition of matrix operations
+    for layer_i, count_table in enumerate(count_tables):
+        qmin_tables.append(torch.zeros([shape[layer_i], shape[layer_i + 1]], dtype=torch.float, device=used_device())
+                           .type(torch.FloatTensor))
+        for i, count_table_row in enumerate(count_table):
+            for j, confusion_matrix in enumerate(count_table_row):
+                marginals_y = confusion_matrix.sum(0).div(len(data))
+                marginals_x = confusion_matrix.sum(1).div(len(data))
+
+                mi = 0.0
+                for x, confusion_matrix_row in enumerate(confusion_matrix):
+                    for y, count_tensor in enumerate(confusion_matrix_row):
+                        joint_probability = count_tensor.item() / len(data)
+                        # TODO VB use q or 2 for log base?
+                        # TODO VB division by zero rethink
+                        if joint_probability > 0.0:
+                            mi += joint_probability * math.log2(joint_probability /
+                                                                (marginals_x[x].item() * marginals_y[y].item()))
+                qmin_tables[layer_i][i][j] = mi
+    return qmin_tables
