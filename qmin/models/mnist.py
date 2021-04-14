@@ -2,12 +2,12 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader
 from torchvision.transforms import ToTensor, ToPILImage, Grayscale
-from qmin import utils
-from qmin.datasets.mnist_download import MNIST_local
 import glob
 from PIL import Image
 
-from qmin.utils import used_device
+import utils
+from datasets.mnist_download import MNIST_local
+from utils import used_device
 
 
 class MnistNN(nn.Module):
@@ -90,19 +90,19 @@ def workflow():
 
     #training_data = datasets.MNIST(
     training_data = MNIST_local(
-        root="../datasets/mnist",
+        root="./datasets/mnist",
         train=True,
         transform=ToTensor(),
-        folder="../datasets/mnist_local"
+        folder="./datasets/mnist_local"
         #target_transform=Lambda(lambda y: torch.zeros(10, dtype=torch.float).scatter_(0, torch.tensor(y), src=torch.tensor(1.)))
     )
 
     #test_data = datasets.MNIST(
     test_data = MNIST_local(
-        root="../datasets/mnist",
+        root="./datasets/mnist",
         train=False,
         transform=ToTensor(),
-        folder="../datasets/mnist_local"
+        folder="./datasets/mnist_local"
         #target_transform=Lambda(lambda y: torch.zeros(10, dtype=torch.float).scatter_(0, torch.tensor(y), src=torch.tensor(1.)))
     )
 
@@ -126,7 +126,7 @@ def workflow():
     model_save = True
 
     model_file_name = "mnist_small.pth" if model_type == MnistSmallNN else "mnist.pth"
-    model_file_path = f'../model_files/{model_file_name}'
+    model_file_path = f'./model_files/{model_file_name}'
 
     model = model_type().to(used_device()) if model_create_new else torch.load(model_file_path).to(used_device())
 
@@ -156,7 +156,7 @@ def workflow():
         torch.save(model, model_file_path)
         print(f"Saved model to {model_file_path}")
 
-    images = glob.glob(r"../datasets\mnist_my\*png")
+    images = glob.glob(r"./datasets\mnist_my\*png")
     for image in images:
         img = Image.open(image)
         trans0 = ToTensor()

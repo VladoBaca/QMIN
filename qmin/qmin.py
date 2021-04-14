@@ -4,6 +4,7 @@ from torch import nn
 from torch.utils.data import Dataset
 import math
 from typing import Callable
+import pandas as pd
 
 from utils import used_device
 
@@ -55,7 +56,7 @@ def get_shape(modules_flat: list[nn.Module]) -> list[int]:
 def get_count_tables(shape: list[int], q: int) -> list[torch.IntTensor]:
     count_tables = []
     for i in range(len(shape) - 1):
-        count_tables.append(torch.zeros([shape[i], shape[i+1], q, q], dtype=torch.int, device=used_device())
+        count_tables.append(torch.zeros([shape[i+1], shape[i], q, q], dtype=torch.int, device=used_device())
                             .type(torch.IntTensor))
     return count_tables
 
@@ -114,7 +115,7 @@ def fill_counts_for_layer_pair(quantized_layer_1: torch.ByteTensor, quantized_la
                                count_table: torch.IntTensor) -> None:
     for prev_i, prev_val in enumerate(quantized_layer_1):
         for next_i, next_val in enumerate(quantized_layer_2):
-            count_table[prev_i][next_i][prev_val.item()][next_val.item()] += 1
+            count_table[next_i][prev_i][next_val.item()][prev_val.item()] += 1
 
 
 # def get_qmin_tables(shape: list[int]) -> list[torch.FloatTensor]:
@@ -149,7 +150,7 @@ def compute_neighbours_qmin(network, data, quantization_degree=2, input_bound_lo
     # TODO VB either do this on CPU or use some kind of map for the inner computation?
     # or, probably use a sophisticated composition of matrix operations
     for layer_i, count_table in enumerate(count_tables):
-        qmin_tables.append(torch.zeros([shape[layer_i], shape[layer_i + 1]], dtype=torch.float, device=used_device())
+        qmin_tables.append(torch.zeros([shape[layer_i + 1], shape[layer_i]], dtype=torch.float, device=used_device())
                            .type(torch.FloatTensor))
         for i, count_table_row in enumerate(count_table):
             for j, confusion_matrix in enumerate(count_table_row):
@@ -167,3 +168,15 @@ def compute_neighbours_qmin(network, data, quantization_degree=2, input_bound_lo
                                                                 (marginals_x[x].item() * marginals_y[y].item()))
                 qmin_tables[layer_i][i][j] = mi
     return qmin_tables
+
+
+def create_qmin_weights_dataframe(qmins, model):
+    params = list(model.parameters())
+
+    qmins_flat = [item.item() for t in qmins for item in t.flatten()]
+    params_flat = [item.item() for t in params[::2] for item in t.flatten()]
+    params_abs_flat = [item.item() for t in params[::2] for item in t.flatten().abs()]
+
+    df = pd.DataFrame(list(zip(qmins_flat, params_flat, params_abs_flat)),
+                      columns=['QMIN', 'Weights', "AbsWgs"])
+    return df
