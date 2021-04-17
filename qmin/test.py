@@ -40,11 +40,13 @@ def test_mnist(model, q, verbose=True):
 
 def create_analyze_df(qmins, model):
     df = qmin.create_qmin_weights_dataframe(qmins, model)
-    df.plot.scatter(x="QMIN", y="AbsWgs")
+    df.plot.scatter(x="QMIN", y="AbsWgs", s=1, alpha=0.3, c="red")
+    df.plot.scatter(x="QMIN", y="Weights", s=1, alpha=0.3, c="red")
     plt.show()
     print("Pearson:")
     print(df.corr())
-    print("Spearman:")
+    print()
+    print("Spearman rank:")
     print(df.corr("spearman"))
     return df
 
@@ -85,8 +87,13 @@ q = 2
 utils.use_cpu()
 
 model = torch.load('./model_files/mnist_small.pth').to(used_device())
-qmins = test_mnist(model, q, True)
-torch.save(qmins, f"./computed_data/qmins_mnist_{q}_00.txt")
+qmins = torch.load(f"./computed_data/qmins_mnist_{q}_00.txt")
+df = create_analyze_df(qmins, model)
+print(df)
+
+
+# qmins = test_mnist(model, q, True)
+# torch.save(qmins, f"./computed_data/qmins_mnist_{q}_00.txt")
 
 
 # experiment_differeneces()
