@@ -13,9 +13,6 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import time
 
-utils.use_cuda()
-utils.use_direct = True
-
 
 def test_mice(model, q, verbose=True):
     training_data = MiceDataset(csv_file="datasets/mice/train.csv")

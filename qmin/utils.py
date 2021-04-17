@@ -2,8 +2,6 @@ import torch
 
 device = "cpu"
 
-# use_direct = True
-
 
 def use_cuda() -> bool:
     global device
