@@ -57,30 +57,29 @@ def get_shape(modules_flat: list[nn.Module]) -> list[int]:
     return shape
 
 
-def get_count_tables(shape: list[int], q: int) -> list[torch.IntTensor]:
-    if utils.use_direct:
-        return get_direct_count_tables(shape, q)
+# def get_count_tables(shape: list[int], q: int) -> list[torch.LongTensor]:
+#     if utils.use_direct:
+#         return get_direct_count_tables(shape, q)
+#
+#     count_tables = []
+#     for i in range(len(shape) - 1):
+#         count_tables.append(torch.zeros([shape[i+1], shape[i], q, q], dtype=torch.long, device=used_device())
+#                             #.type(torch.LongTensor)
+#                             )
+#     return count_tables
 
+
+def get_count_tables(shape: list[int], q: int) -> list[torch.LongTensor]:
     count_tables = []
     for i in range(len(shape) - 1):
-        count_tables.append(torch.zeros([shape[i+1], shape[i], q, q], dtype=torch.int, device=used_device())
-                            .type(torch.IntTensor))
+        count_tables.append(torch.zeros([shape[i+1]*q, shape[i]*q], dtype=torch.long, device=used_device()))
     return count_tables
 
 
-def get_direct_count_tables(shape: list[int], q: int) -> list[torch.IntTensor]:
-    count_tables = []
-    for i in range(len(shape) - 1):
-        count_tables.append(torch.zeros([shape[i+1]*q, shape[i]*q], dtype=torch.int, device=used_device())
-                            .type(torch.IntTensor))
-        # .to(used_device())) TODO VB devices and types
-    return count_tables
-
-
-def fill_count_tables(data: Dataset, modules_flat: list[nn.Module], count_tables: list[torch.IntTensor],
-                      quantization_degree: int, input_bound_low: float, input_bound_up: float) -> None:
+def fill_count_tables(data: Dataset, modules_flat: list[nn.Module], count_tables: list[torch.LongTensor],
+                      quantization_degree: int, input_bound_low: float, input_bound_up: float,
+                      verbose: bool = False) -> None:
     for idx, (X, _) in enumerate(data):
-        # TODO VB is this necessary?
         with torch.no_grad():
             activation_tensor_current = X.to(used_device())
             module_last = None
@@ -104,7 +103,7 @@ def fill_count_tables(data: Dataset, modules_flat: list[nn.Module], count_tables
                 fill_counts_for_layer_pair(quantized_tensor_previous, quantized_tensor_next,
                                            count_tables[layers_finished - 1], quantization_degree)
             # CPU 20s, cuda ~2:20m (mnist_small)
-            if idx % 20 == 0:
+            if verbose and idx % 20 == 0:
                 size = len(data)
                 print(f"{datetime.now().strftime('%H:%M:%S')}: [{idx:>5d}/{size:>5d}] {100*idx/size:>3.2f}%")
 
@@ -127,23 +126,44 @@ def get_quantizer(module: nn.Module, bound_low: float = 0., bound_up: float = 0.
         raise TypeError(f"Modules of {type(module)} type are not allowed for quantization!")
 
 
+# def fill_counts_for_layer_pair(quantized_layer_1: torch.LongTensor, quantized_layer_2: torch.LongTensor,
+#                                count_table: torch.LongTensor, quantization_degree: int) -> None:
+#     if utils.use_direct:
+#         fill_direct_counts_for_layer_pair(quantized_layer_1, quantized_layer_2, count_table, quantization_degree)
+#         return
+#     for prev_i, prev_val in enumerate(quantized_layer_1):
+#         for next_i, next_val in enumerate(quantized_layer_2):
+#             count_table[next_i][prev_i][next_val.item()][prev_val.item()] += 1
+
+
 def fill_counts_for_layer_pair(quantized_layer_1: torch.LongTensor, quantized_layer_2: torch.LongTensor,
-                               count_table: torch.IntTensor, quantization_degree: int) -> None:
-    if utils.use_direct:
-        fill_direct_counts_for_layer_pair(quantized_layer_1, quantized_layer_2, count_table, quantization_degree)
-        return
-    for prev_i, prev_val in enumerate(quantized_layer_1):
-        for next_i, next_val in enumerate(quantized_layer_2):
-            count_table[next_i][prev_i][next_val.item()][prev_val.item()] += 1
+                                      count_table: torch.LongTensor, quantization_degree: int) -> None:
+    layer_1_one_hot = one_hot(quantized_layer_1, quantization_degree).flatten()
 
+    idx2_tensor = (torch.arange(end=quantized_layer_2.size()[0], device=used_device()) * quantization_degree
+                   + quantized_layer_2)
 
-def fill_direct_counts_for_layer_pair(quantized_layer_1: torch.LongTensor, quantized_layer_2: torch.LongTensor,
-                                      count_table: torch.IntTensor, quantization_degree: int) -> None:
-    layer_1_one_hot = one_hot(quantized_layer_1, quantization_degree).flatten().type(torch.IntTensor) # TODO VB types and device
-    layer_2_one_hot = one_hot(quantized_layer_2, quantization_degree).flatten().type(torch.IntTensor)
+    count_table[idx2_tensor] += layer_1_one_hot
 
-    increment_table = layer_2_one_hot.reshape(-1, 1).matmul(layer_1_one_hot.reshape(1, -1)).round()
-    count_table.add_(increment_table)
+    # idx1_tensor = (torch.arange(end=quantized_layer_1.size()[0], device=used_device()) * quantization_degree
+    #               + quantized_layer_1)
+
+    # .type(torch.IntTensor).to(used_device())
+
+    #layer_2_one_hot = one_hot(quantized_layer_2, quantization_degree).flatten() #.type(torch.BoolTensor)
+
+    # layer_1_one_hot_float = torch.tensor(layer_1_one_hot, dtype=torch.float)
+    # layer_2_one_hot_float = torch.tensor(layer_2_one_hot, dtype=torch.float)
+
+    # for row_idx, row_item in enumerate(layer_2_one_hot):
+    #     if row_item.item():
+    #         count_table[row_idx].add_(layer_1_one_hot)
+
+    # increment_table = layer_2_one_hot_float.reshape(-1, 1).matmul(layer_1_one_hot_float.reshape(1, -1)).round()
+    # count_table.add_(increment_table)
+
+    # idx_tensor = torch.nonzero(layer_2_one_hot, as_tuple=True)[0]
+
 
 # def get_qmin_tables(shape: list[int]) -> list[torch.FloatTensor]:
 #     qmin_tables = []
@@ -161,43 +181,37 @@ def ensure_input_bounds(input_bound_low: float, input_bound_up: float, data: Dat
     return input_bound_low, input_bound_up
 
 
-def compute_qmin_tables(count_tables: list[torch.IntTensor], shape: list[int], data_len: int,
-                        quantization_degree: int) -> list[torch.Tensor]:
-    # TODO VB debug this
-    if utils.use_direct:
-        return compute_qmin_tables_direct(count_tables, shape, data_len, quantization_degree)
-
-    qmin_tables = []
-    for layer_i, count_table in enumerate(count_tables):
-        qmin_tables.append(torch.zeros([shape[layer_i + 1], shape[layer_i]], dtype=torch.float, device=used_device())
-                           .type(torch.FloatTensor))
-        for i, count_table_row in enumerate(count_table):
-            for j, confusion_matrix in enumerate(count_table_row):
-                marginals_y = confusion_matrix.sum(0).div(data_len)
-                marginals_x = confusion_matrix.sum(1).div(data_len)
-
-                mi = 0.0
-                for x, confusion_matrix_row in enumerate(confusion_matrix):
-                    for y, count_tensor in enumerate(confusion_matrix_row):
-                        joint_probability = count_tensor.item() / data_len
-                        # TODO VB use q or 2 for log base?
-                        # TODO VB division by zero rethink
-                        if joint_probability > 0.0:
-                            mi += joint_probability * math.log2(joint_probability /
-                                                                (marginals_x[x].item() * marginals_y[y].item()))
-                qmin_tables[layer_i][i][j] = mi
-    return qmin_tables
+# def compute_qmin_tables(count_tables: list[torch.IntTensor], shape: list[int], data_len: int,
+#                         quantization_degree: int) -> list[torch.Tensor]:
+#     if utils.use_direct:
+#         return compute_qmin_tables_direct(count_tables, shape, data_len, quantization_degree)
+#
+#     qmin_tables = []
+#     for layer_i, count_table in enumerate(count_tables):
+#         qmin_tables.append(torch.zeros([shape[layer_i + 1], shape[layer_i]], dtype=torch.float, device=used_device())
+#                            .type(torch.FloatTensor))
+#         for i, count_table_row in enumerate(count_table):
+#             for j, confusion_matrix in enumerate(count_table_row):
+#                 marginals_y = confusion_matrix.sum(0).div(data_len)
+#                 marginals_x = confusion_matrix.sum(1).div(data_len)
+#
+#                 mi = 0.0
+#                 for x, confusion_matrix_row in enumerate(confusion_matrix):
+#                     for y, count_tensor in enumerate(confusion_matrix_row):
+#                         joint_probability = count_tensor.item() / data_len
+#                         if joint_probability > 0.0:
+#                             mi += joint_probability * math.log2(joint_probability /
+#                                                                 (marginals_x[x].item() * marginals_y[y].item()))
+#                 qmin_tables[layer_i][i][j] = mi
+#     return qmin_tables
 
 
-def compute_qmin_tables_direct(direct_count_tables: list[torch.IntTensor], shape: list[int], data_len: int,
+def compute_qmin_tables(direct_count_tables: list[torch.IntTensor], shape: list[int], data_len: int,
                                quantization_degree: int) -> list[torch.Tensor]:
-    # TODO VB debug this
     qmin_tables = []
     for layer_i, direct_count_table in enumerate(direct_count_tables):
         qmin_tables.append(torch.zeros([shape[layer_i + 1], shape[layer_i]], dtype=torch.float, device=used_device())
                            .type(torch.FloatTensor))
-#        for i, count_table_row in enumerate(direct_count_table):
-#            for j, confusion_matrix in enumerate(count_table_row):
         for i in range(shape[layer_i + 1]):
             for j in range(shape[layer_i]):
                 confusion_matrix_i = i * quantization_degree
@@ -212,8 +226,6 @@ def compute_qmin_tables_direct(direct_count_tables: list[torch.IntTensor], shape
                 for x, confusion_matrix_row in enumerate(confusion_matrix):
                     for y, count_tensor in enumerate(confusion_matrix_row):
                         joint_probability = count_tensor.item() / data_len
-                        # TODO VB use q or 2 for log base?
-                        # TODO VB division by zero rethink
                         if joint_probability > 0.0:
                             mi += joint_probability * math.log2(joint_probability /
                                                                 (marginals_x[x].item() * marginals_y[y].item()))
@@ -221,20 +233,17 @@ def compute_qmin_tables_direct(direct_count_tables: list[torch.IntTensor], shape
     return qmin_tables
 
 
-# TODO VB add types!!
 def compute_neighbours_qmin(network: nn.Module, data: Dataset, quantization_degree: int = 2,
-                            input_bound_low: float = None, input_bound_up: float = None) -> list[torch.Tensor]:
+                            input_bound_low: float = None, input_bound_up: float = None,
+                            verbose: bool = False) -> list[torch.Tensor]:
     modules_flat = flatten_module(network)
     shape = get_shape(modules_flat)
     count_tables = get_count_tables(shape, quantization_degree)
 
     input_bound_low, input_bound_up = ensure_input_bounds(input_bound_low, input_bound_up, data)
 
-    fill_count_tables(data, modules_flat, count_tables, quantization_degree, input_bound_low, input_bound_up)
+    fill_count_tables(data, modules_flat, count_tables, quantization_degree, input_bound_low, input_bound_up, verbose)
 
-    # TODO VB add direct for MI computation
-
-    # TODO VB sanitize len()
     qmin_tables = compute_qmin_tables(count_tables, shape, len(data), quantization_degree)
 
     return qmin_tables
