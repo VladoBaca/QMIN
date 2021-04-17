@@ -161,7 +161,21 @@ def compute_qmin_tables(direct_count_tables: list[torch.IntTensor], shape: list[
 
 def compute_neighbours_qmin(network: nn.Module, data: Dataset, quantization_degree: int = 2,
                             input_bound_low: float = None, input_bound_up: float = None,
-                            verbose: bool = False) -> list[torch.Tensor]:
+                            verbose: bool = True) -> list[torch.Tensor]:
+    """
+    Computes list of Tensors of Quantized mutual information
+    between neighbouring neurons in respective pairs of layers.
+    :param network: The neural network, as a Pytorch module.
+    :param data: The input dataset.
+    :param quantization_degree: The number of bins to quantize activations into, 2 by default.
+    :param input_bound_low: Optional, the lower bound on activations input neurons.
+    If not provided, minimum of inputs throughout all components of all input instances is used.
+    :param input_bound_up: Optional, the upper bound on activations input neurons.
+    If not provided, maximum of inputs throughout all components of all input instances is used.
+    :param verbose: True to display progress reports.
+    :return: The list of length (layer_count - 1). Each component of the list is a matrix
+    of floats shaped: (layer_size[i+1] x layer_size[i]), containing the quantized mutual informations.
+    """
     modules_flat = flatten_module(network)
     shape = get_shape(modules_flat)
     count_tables = get_count_tables(shape, quantization_degree)
@@ -176,6 +190,13 @@ def compute_neighbours_qmin(network: nn.Module, data: Dataset, quantization_degr
 
 
 def create_qmin_weights_dataframe(qmins: list[torch.Tensor], model: nn.Module) -> pd.DataFrame:
+    """
+    Creates the dataframe of aligned mutual informations, weights and absolute weights of neighbouring neuron pairs.
+    :param qmins: The list of quantized mutual informations, as returned by compute_neighbours_qmin.
+    :param model: The neural network as a pytorch module.
+    :return: The pandas dataframe containing "QMIN", "Weights" and "AbsWgs" columns.
+    """
+
     params = list(model.parameters())
 
     qmins_flat = [item.item() for t in qmins for item in t.flatten()]
@@ -183,5 +204,5 @@ def create_qmin_weights_dataframe(qmins: list[torch.Tensor], model: nn.Module) -
     params_abs_flat = [item.item() for t in params[::2] for item in t.flatten().abs()]
 
     df = pd.DataFrame(list(zip(qmins_flat, params_flat, params_abs_flat)),
-                      columns=['QMIN', 'Weights', "AbsWgs"])
+                      columns=["QMIN", "Weights", "AbsWgs"])
     return df
