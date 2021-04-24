@@ -38,8 +38,7 @@ def test_mnist(model, q, verbose=True):
     return qmin_table
 
 
-def create_analyze_df(qmins, model):
-    df = qmin.create_qmin_weights_dataframe(qmins, model)
+def analyze_df(df):
     df.plot.scatter(x="QMIN", y="AbsWgs", s=1, alpha=0.3, c="red")
     df.plot.scatter(x="QMIN", y="Weights", s=1, alpha=0.3, c="red")
     plt.show()
@@ -48,7 +47,6 @@ def create_analyze_df(qmins, model):
     print()
     print("Spearman rank:")
     print(df.corr("spearman"))
-    return df
 
 
 # def use_direct(direct):
@@ -67,13 +65,15 @@ def experiment_differeneces():
     utils.use_cuda()
     model = torch.load("model_files/mice.pth").to(used_device())
     qmins_dir, time_dir = test_mice(model, q)
-    df_dir = create_analyze_df(qmins_dir, model)
+    df_dir = qmin.create_qmin_weights_dataframe(qmins_dir, model)
+    analyze_df(df_dir)
 
     # use_direct(False)
     utils.use_cpu()
     model = torch.load("model_files/mice.pth").to(used_device())
     qmins_undir, time_undir = test_mice(model, q)
-    df_undir = create_analyze_df(qmins_undir, model)
+    df_undir = qmin.create_qmin_weights_dataframe(qmins_undir, model)
+    analyze_df(df_undir)
 
     print(f"Direct is {time_undir/time_dir} times faster.")
 
@@ -83,12 +83,16 @@ def experiment_differeneces():
     print("Experiment finished")
 
 
-q = 2
+q = 4
 utils.use_cpu()
 
 model = torch.load('./model_files/mnist_small.pth').to(used_device())
-qmins = torch.load(f"./computed_data/qmins_mnist_{q}_00.txt")
-df = create_analyze_df(qmins, model)
+# qmins = torch.load(f"./computed_data/qmins_mnist_{q}_00.txt")
+qmins = test_mnist(model, q, True)
+torch.save(qmins, f"./computed_data/qmins_mnist_{q}_00.txt")
+
+df = qmin.create_qmin_weights_dataframe(qmins, model)
+analyze_df(df)
 print(df)
 
 
