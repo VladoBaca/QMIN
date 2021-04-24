@@ -1,5 +1,11 @@
 import torch
 from torchvision.transforms import ToTensor
+from torch import nn
+import pandas as pd
+import matplotlib.pyplot as plt
+import time
+import os.path
+from os import path
 
 import qmin
 import utils
@@ -9,12 +15,10 @@ from models.mice import MiceDataset
 from models.mice import MiceNeuralNetwork
 from datasets.mnist_download import MNIST_local
 from models.mnist import MnistSmallNN
-import pandas as pd
-import matplotlib.pyplot as plt
-import time
 
 
-def test_mice(model, q, verbose=True):
+
+def test_mice(model, q, verbose=True) -> list[torch.Tensor]:
     training_data = MiceDataset(csv_file="datasets/mice/train.csv")
     # model = torch.load('model_files/mice.pth').to(used_device())
     # q = 2
@@ -23,30 +27,37 @@ def test_mice(model, q, verbose=True):
     end = time.time()
     interval = end - start
     print(f"Computation time: {interval}.")
-    return qmin_table, interval
+    return qmin_table
 
 
-def test_mnist(model, q, verbose=True):
+def test_mnist(model, q, verbose=True) -> list[torch.Tensor]:
     training_data = MNIST_local(
         root="./datasets/mnist",
         train=True,
         transform=ToTensor(),
         folder="./datasets/mnist_local"
     )
+    start = time.time()
     qmin_table = qmin.compute_neighbours_qmin(model, training_data, q, 0., 1., verbose)
-    print(qmin_table)
+    end = time.time()
+    interval = end - start
+    print(f"Computation time: {interval}.")
     return qmin_table
 
 
-def analyze_df(df):
-    df.plot.scatter(x="QMIN", y="AbsWgs", s=1, alpha=0.3, c="red")
-    df.plot.scatter(x="QMIN", y="Weights", s=1, alpha=0.3, c="red")
+def analyze_df(df, qmins):
+    colors_map = plt.cm.get_cmap("rainbow", len(qmins))
+
+    df.plot.scatter(x="QMIN", y="AbsWgs", s=1, alpha=0.4, c="Layers", cmap=colors_map)
+    df.plot.scatter(x="QMIN", y="Weights", s=1, alpha=0.4, c="Layers", cmap=colors_map)
+    df_data_only = df.iloc[:, 0:3]
+
     plt.show()
     print("Pearson:")
-    print(df.corr())
+    print(df_data_only.corr())
     print()
     print("Spearman rank:")
-    print(df.corr("spearman"))
+    print(df_data_only.corr("spearman"))
 
 
 # def use_direct(direct):
@@ -83,22 +94,42 @@ def experiment_differeneces():
     print("Experiment finished")
 
 
-q = 4
+dataset_tester_map = {"mice": test_mice, "mnist": test_mnist}
+
+
+def load_or_compute_qmins(dataset: str, q: int, model_name: str = None) -> (nn.Module, list[torch.Tensor]):
+    data_model_part = f"{dataset}" if model_name is None else f"{dataset}_{model_name}"
+    model = torch.load(f'./model_files/{data_model_part}.pth').to(used_device())
+
+    qmins_path = f"./computed_data/qmins_{data_model_part}_{q}_00.txt"
+    if path.exists(qmins_path):
+        qmins = torch.load(qmins_path)
+    else:
+        qmins = dataset_tester_map[dataset](model, q)
+        torch.save(qmins, qmins_path)
+    return model, qmins
+
+
+q = 2
 utils.use_cpu()
 
-model = torch.load('./model_files/mnist_small.pth').to(used_device())
-# qmins = torch.load(f"./computed_data/qmins_mnist_{q}_00.txt")
-qmins = test_mnist(model, q, True)
-torch.save(qmins, f"./computed_data/qmins_mnist_{q}_00.txt")
+model, qmins = load_or_compute_qmins("mnist", q, "small")
 
 df = qmin.create_qmin_weights_dataframe(qmins, model)
-analyze_df(df)
+analyze_df(df, qmins)
 print(df)
+
+
+print("DONE")
+
+# model = torch.load('./model_files/mnist_small.pth').to(used_device())
+# # qmins = torch.load(f"./computed_data/qmins_mnist_{q}_00.txt")
+# qmins = test_mnist(model, q, True)
+# torch.save(qmins, f"./computed_data/qmins_mnist_{q}_00.txt")
 
 
 # qmins = test_mnist(model, q, True)
 # torch.save(qmins, f"./computed_data/qmins_mnist_{q}_00.txt")
-
 
 # experiment_differeneces()
 
@@ -118,9 +149,6 @@ print(df)
 # print(df)
 
 # df.plot.scatter(x="QMIN", y="Weights")
-
-
-print("DONE")
 
 # 77-20-10-3  ~ a minute or so
 

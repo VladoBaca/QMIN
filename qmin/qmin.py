@@ -192,9 +192,10 @@ def compute_neighbours_qmin(network: nn.Module, data: Dataset, quantization_degr
 def create_qmin_weights_dataframe(qmins: list[torch.Tensor], model: nn.Module) -> pd.DataFrame:
     """
     Creates the dataframe of aligned mutual informations, weights and absolute weights of neighbouring neuron pairs.
-    :param qmins: The list of quantized mutual informations, as returned by compute_neighbours_qmin.
+    :param qmins: The list of quantized mutual informations between neighbouring neurons,
+    as returned by compute_neighbours_qmin.
     :param model: The neural network as a pytorch module.
-    :return: The pandas dataframe containing "QMIN", "Weights" and "AbsWgs" columns.
+    :return: The pandas dataframe containing "QMIN", "Weights" and "AbsWgs" "Layers" columns.
     """
 
     params = list(model.parameters())
@@ -202,7 +203,9 @@ def create_qmin_weights_dataframe(qmins: list[torch.Tensor], model: nn.Module) -
     qmins_flat = [item.item() for t in qmins for item in t.flatten()]
     params_flat = [item.item() for t in params[::2] for item in t.flatten()]
     params_abs_flat = [item.item() for t in params[::2] for item in t.flatten().abs()]
+    layers_flat = [layer_label for i, t in enumerate(qmins) for layer_label in [i] * (t.size()[0] * t.size()[1])]
+    #layers_flat = [layer_label for i, t in enumerate(qmins) for layer_label in [f"{i}-{i+1}"] * (t.size()[0] * t.size()[1])]
 
-    df = pd.DataFrame(list(zip(qmins_flat, params_flat, params_abs_flat)),
-                      columns=["QMIN", "Weights", "AbsWgs"])
+    df = pd.DataFrame(list(zip(qmins_flat, params_flat, params_abs_flat, layers_flat)),
+                      columns=["QMIN", "Weights", "AbsWgs", "Layers"])
     return df
