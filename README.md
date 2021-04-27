@@ -8,4 +8,6 @@ df = qmin.create_qmin_weights_dataframe(qmins, my_pytorch_module)
 
 df.plot.scatter(x="QMIN", y="AbsWgs")
 print(df.corr())
+
+qmins_in_layer = qmin.compute_in_layer_qmin(my_pytorch_module, my_dataset, quantization_degree=4)
 ```
