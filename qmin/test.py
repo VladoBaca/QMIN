@@ -17,20 +17,19 @@ from datasets.mnist_download import MNIST_local
 from models.mnist import MnistSmallNN
 
 
-
-def test_mice(model, q, verbose=True) -> list[torch.Tensor]:
+def test_mice(model, q, verbose=True, computation=qmin.compute_neighbours_qmin) -> list[torch.Tensor]:
     training_data = MiceDataset(csv_file="datasets/mice/train.csv")
     # model = torch.load('model_files/mice.pth').to(used_device())
     # q = 2
     start = time.time()
-    qmin_table = qmin.compute_neighbours_qmin(model, training_data, q, 0., 1.3, verbose)
+    qmin_table = computation(model, training_data, q, 0., 1.3, verbose)
     end = time.time()
     interval = end - start
     print(f"Computation time: {interval}.")
     return qmin_table
 
 
-def test_mnist(model, q, verbose=True) -> list[torch.Tensor]:
+def test_mnist(model, q, verbose=True, computation=qmin.compute_neighbours_qmin) -> list[torch.Tensor]:
     training_data = MNIST_local(
         root="./datasets/mnist",
         train=True,
@@ -38,7 +37,7 @@ def test_mnist(model, q, verbose=True) -> list[torch.Tensor]:
         folder="./datasets/mnist_local"
     )
     start = time.time()
-    qmin_table = qmin.compute_neighbours_qmin(model, training_data, q, 0., 1., verbose)
+    qmin_table = computation(model, training_data, q, 0., 1., verbose)
     end = time.time()
     interval = end - start
     print(f"Computation time: {interval}.")
@@ -95,17 +94,18 @@ def experiment_differeneces():
 
 
 dataset_tester_map = {"mice": test_mice, "mnist": test_mnist}
+computation_tester_map = {"neighbours": qmin.compute_neighbours_qmin, "in_layer": qmin.compute_in_layer_qmin}
 
 
-def load_or_compute_qmins(dataset: str, q: int, model_name: str = None) -> (nn.Module, list[torch.Tensor]):
+def load_or_compute_qmins(dataset: str, q: int, model_name: str = None, computation="neighbours") -> (nn.Module, list[torch.Tensor]):
     data_model_part = f"{dataset}" if model_name is None else f"{dataset}_{model_name}"
     model = torch.load(f'./model_files/{data_model_part}.pth').to(used_device())
 
-    qmins_path = f"./computed_data/qmins_{data_model_part}_{q}_00.txt"
+    qmins_path = f"./computed_data/qmins_{computation}_{data_model_part}_{q}_00.txt"
     if path.exists(qmins_path):
         qmins = torch.load(qmins_path)
     else:
-        qmins = dataset_tester_map[dataset](model, q)
+        qmins = dataset_tester_map[dataset](model, q, computation=computation_tester_map[computation])
         torch.save(qmins, qmins_path)
     return model, qmins
 
@@ -113,7 +113,8 @@ def load_or_compute_qmins(dataset: str, q: int, model_name: str = None) -> (nn.M
 q = 2
 utils.use_cpu()
 
-model, qmins = load_or_compute_qmins("mnist", q, "small")
+# model, qmins = load_or_compute_qmins("mnist", q, "small")
+model, qmins = load_or_compute_qmins("mice", 2, computation="in_layer")
 
 df = qmin.create_qmin_weights_dataframe(qmins, model)
 analyze_df(df, qmins)
