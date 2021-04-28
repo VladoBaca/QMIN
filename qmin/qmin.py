@@ -153,32 +153,12 @@ def ensure_input_bounds(input_bound_low: float, input_bound_up: float, data: Dat
 
 
 def compute_qmin_tables(direct_count_tables: list[torch.IntTensor], data_len: int,
-                               quantization_degree: int) -> list[torch.Tensor]:
-    qmin_tables = []
-    for layer_i, direct_count_table in enumerate(direct_count_tables):
-        size_x = int(direct_count_table.size()[0] / quantization_degree)
-        size_y = int(direct_count_table.size()[1] / quantization_degree)
-        qmin_tables.append(torch.zeros([size_x, size_y], dtype=torch.float, device=used_device())
-                           .type(torch.FloatTensor))
-        for i in range(size_x):
-            for j in range(size_y):
-                confusion_matrix_i = i * quantization_degree
-                confusion_matrix_j = j * quantization_degree
-                confusion_matrix = direct_count_table[confusion_matrix_i:confusion_matrix_i+quantization_degree,
-                                                      confusion_matrix_j:confusion_matrix_j+quantization_degree]
-
-                marginals_y = confusion_matrix.sum(0).div(data_len)
-                marginals_x = confusion_matrix.sum(1).div(data_len)
-
-                mi = 0.0
-                for x, confusion_matrix_row in enumerate(confusion_matrix):
-                    for y, count_tensor in enumerate(confusion_matrix_row):
-                        joint_probability = count_tensor.item() / data_len
-                        if joint_probability > 0.0:
-                            mi += joint_probability * math.log2(joint_probability /
-                                                                (marginals_x[x].item() * marginals_y[y].item()))
-                qmin_tables[layer_i][i][j] = mi
-    return qmin_tables
+                        q: int) -> Generator[torch.Tensor]:
+    for count in direct_count_tables:
+        shape = (int(count.shape[0] / q), q, int(count.shape[1] / q), q)
+        joint = count.reshape(*shape).transpose(1, 2).div(data_len)
+        marginals = joint.sum(2, keepdim=True) * joint.sum(3, keepdim=True)
+        yield (joint / marginals).pow(joint).log2().sum((2,3))
 
 
 def compute_neighbours_qmin(network: nn.Module, data: Dataset, quantization_degree: int = 2,
@@ -206,7 +186,7 @@ def compute_neighbours_qmin(network: nn.Module, data: Dataset, quantization_degr
 
     fill_count_tables_neighbours(data, modules_flat, count_tables, quantization_degree, input_bound_low, input_bound_up, verbose)
 
-    qmin_tables = compute_qmin_tables(count_tables, len(data), quantization_degree)
+    qmin_tables = list(compute_qmin_tables(count_tables, len(data), quantization_degree))
 
     return qmin_tables
 
@@ -260,6 +240,6 @@ def compute_in_layer_qmin(network: nn.Module, data: Dataset, quantization_degree
     # Consider the optimization of only computing a half of the matrix.
     fill_count_tables_in_layer(data, modules_flat, count_tables, quantization_degree, input_bound_low, input_bound_up, verbose)
 
-    qmin_tables = compute_qmin_tables(count_tables, len(data), quantization_degree)
+    qmin_tables = list(compute_qmin_tables(count_tables, len(data), quantization_degree))
 
     return qmin_tables
