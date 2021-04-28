@@ -1,5 +1,7 @@
 # Datasets
-qmin/datasets/*/
+# Do not include datasets, except for mice (which is modified from the original)
+qmin/datasets/*/*
+!qmin/datasets/mice/train.csv
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
