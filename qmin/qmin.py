@@ -1,4 +1,3 @@
-from datetime import datetime
 import torch
 import torch.nn.functional
 from torch import nn
@@ -9,7 +8,6 @@ import math
 from typing import Callable, Generator
 import pandas as pd
 
-import utils
 from utils import used_device
 
 quantizable_modules = [nn.Sigmoid, nn.ReLU]
@@ -38,36 +36,6 @@ def flatten_module(module: nn.Module) -> list[nn.Module]:
     return modules_flat
 
 
-def get_shape(modules_flat: list[nn.Module]) -> list[int]:
-    last_module = None
-    shape = []
-    for module in modules_flat:
-        if isinstance(module, nn.Linear):
-            if not shape:
-                shape.append(module.in_features)
-                shape.append(module.out_features)
-            elif any(isinstance(last_module, t) for t in quantizable_modules):
-                if module.in_features != shape[-1]:
-                    raise Exception(f"Inconsistent layer sizes: {module.in_features} vs. {shape[-1]}!")
-                shape.append(module.out_features)
-            else:
-                raise TypeError(f"Modules of {type(last_module)} type are not allowed for quantization!")
-        if not any(isinstance(module, t) for t in invariant_modules):
-            last_module = module
-    return shape
-
-
-def get_count_tables(shape: list[int], q: int) -> list[torch.LongTensor]:
-    count_tables = [torch.zeros([shape[i+1]*q, shape[i]*q], dtype=torch.long, device=used_device())
-                    for i in range(len(shape) - 1)]
-    return count_tables
-
-
-def get_in_layer_count_tables(shape: list[int], q: int) -> list[torch.LongTensor]:
-    count_tables = [torch.zeros([count*q, count*q], dtype=torch.long, device=used_device()) for count in shape]
-    return count_tables
-
-
 def iterate_quantized_layers(modules_flat: list[nn.Module], instance: Tensor, quantization_degree: int,
                              input_bound_low: float, input_bound_up: float) -> Generator[torch.LongTensor, None, None]:
     with torch.no_grad():
@@ -83,37 +51,14 @@ def iterate_quantized_layers(modules_flat: list[nn.Module], instance: Tensor, qu
         yield quantize_layer(activation_tensor, module_last, quantization_degree, input_bound_low, input_bound_up)
 
 
-def fill_count_tables_neighbours(data: Dataset, modules_flat: list[nn.Module], count_tables: list[torch.LongTensor],
-                      quantization_degree: int, input_bound_low: float, input_bound_up: float,
-                      verbose: bool = False) -> None:
-    for idx, (X, _) in enumerate(data):
-        with torch.no_grad():
-            quantized_layer_previous = None
-            for i, quantized_layer in enumerate(iterate_quantized_layers(modules_flat, X, quantization_degree,
-                                                                         input_bound_low, input_bound_up)):
-                if quantized_layer_previous is not None:
-                    fill_counts_for_layer_pair(quantized_layer_previous, quantized_layer,
-                                               count_tables[i - 1], quantization_degree)
-                quantized_layer_previous = quantized_layer
-
-            # CPU 20s, cuda ~2:20m (mnist_small)
-            if verbose and idx % 20 == 0:
-                size = len(data)
-                print(f"{datetime.now().strftime('%H:%M:%S')}: [{idx:>5d}/{size:>5d}] {100*idx/size:>3.2f}%")
+def onehotcounts(data: Dataset, modules_flat: list[nn.Module],
+                      quantization_degree: int, input_bound_low: float, input_bound_up: float) -> list[Tensor]:
+    xs = tuple(iterate_quantized_layers(modules_flat, X, quantization_degree,input_bound_low, input_bound_up) for X,_ in data)
+    return list(one_hot(torch.stack(list(x))) for x in zip(*xs))
 
 
-def fill_count_tables_in_layer(data: Dataset, modules_flat: list[nn.Module], count_tables: list[torch.LongTensor],
-                               quantization_degree: int, input_bound_low: float, input_bound_up: float,
-                               verbose: bool = False) -> None:
-    for idx, (X, _) in enumerate(data):
-        with torch.no_grad():
-            for i, quantized_layer in enumerate(iterate_quantized_layers(modules_flat, X, quantization_degree,
-                                                                         input_bound_low, input_bound_up)):
-                fill_counts_for_layer_pair(quantized_layer, quantized_layer, count_tables[i], quantization_degree)
-
-            if verbose and idx % 20 == 0:
-                size = len(data)
-                print(f"{datetime.now().strftime('%H:%M:%S')}: [{idx:>5d}/{size:>5d}] {100*idx/size:>3.2f}%")
+def mutual_info(A: Tensor, B: Tensor) -> Tensor:
+    return torch.tensordot(A,B,([0],[0]))
 
 
 def quantize_layer(activation_tensor: torch.FloatTensor, module: nn.Module, quantization_degree: int,
@@ -134,16 +79,6 @@ def get_quantizer(module: nn.Module, bound_low: float = 0., bound_up: float = 0.
         raise TypeError(f"Modules of {type(module)} type are not allowed for quantization!")
 
 
-def fill_counts_for_layer_pair(quantized_layer_1: torch.LongTensor, quantized_layer_2: torch.LongTensor,
-                               count_table: torch.LongTensor, quantization_degree: int) -> None:
-    layer_1_one_hot = one_hot(quantized_layer_1, quantization_degree).flatten()
-
-    idx2_tensor = (torch.arange(end=quantized_layer_2.size()[0], device=used_device()) * quantization_degree
-                   + quantized_layer_2)
-
-    count_table[idx2_tensor] += layer_1_one_hot
-
-
 def ensure_input_bounds(input_bound_low: float, input_bound_up: float, data: Dataset) -> (float, float):
     if input_bound_low is None:
         input_bound_low = min((X.min() for (X, _) in data)).item()
@@ -153,12 +88,11 @@ def ensure_input_bounds(input_bound_low: float, input_bound_up: float, data: Dat
 
 
 def compute_qmin_tables(direct_count_tables: list[torch.IntTensor], data_len: int,
-                        q: int) -> Generator[torch.Tensor]:
+                        q: int):
     for count in direct_count_tables:
-        shape = (int(count.shape[0] / q), q, int(count.shape[1] / q), q)
-        joint = count.reshape(*shape).transpose(1, 2).div(data_len)
-        marginals = joint.sum(2, keepdim=True) * joint.sum(3, keepdim=True)
-        yield (joint / marginals).pow(joint).log2().sum((2,3))
+        joint = count.div(data_len)
+        marginals = joint.sum(1, keepdim=True) * joint.sum(3, keepdim=True)
+        yield (joint / marginals).pow(joint).log2().sum((1,3))
 
 
 def compute_neighbours_qmin(network: nn.Module, data: Dataset, quantization_degree: int = 2,
@@ -179,14 +113,12 @@ def compute_neighbours_qmin(network: nn.Module, data: Dataset, quantization_degr
     of floats shaped: (layer_size[i+1] x layer_size[i]), containing the quantized mutual informations.
     """
     modules_flat = flatten_module(network)
-    shape = get_shape(modules_flat)
-    count_tables = get_count_tables(shape, quantization_degree)
 
     input_bound_low, input_bound_up = ensure_input_bounds(input_bound_low, input_bound_up, data)
 
-    fill_count_tables_neighbours(data, modules_flat, count_tables, quantization_degree, input_bound_low, input_bound_up, verbose)
+    onehots = onehotcounts(data, modules_flat, quantization_degree, input_bound_low, input_bound_up)
 
-    qmin_tables = list(compute_qmin_tables(count_tables, len(data), quantization_degree))
+    qmin_tables = list(compute_qmin_tables([mutual_info(A,B) for A, B in zip(onehots, onehots[1:])], len(data), quantization_degree))
 
     return qmin_tables
 
@@ -214,8 +146,7 @@ def create_qmin_weights_dataframe(qmins: list[torch.Tensor], model: nn.Module) -
 
 
 def compute_in_layer_qmin(network: nn.Module, data: Dataset, quantization_degree: int = 2,
-                          input_bound_low: float = None, input_bound_up: float = None,
-                          verbose: bool = True) -> list[torch.Tensor]:
+                          input_bound_low: float = None, input_bound_up: float = None) -> list[torch.Tensor]:
     """
     Computes list of Tensors of Quantized mutual information
     between same-layer neurons in respective layers.
@@ -231,15 +162,13 @@ def compute_in_layer_qmin(network: nn.Module, data: Dataset, quantization_degree
     of floats shaped: (layer_size[i] x layer_size[i]), containing the quantized mutual informations.
     """
     modules_flat = flatten_module(network)
-    shape = get_shape(modules_flat)
-    count_tables = get_in_layer_count_tables(shape, quantization_degree)
 
     input_bound_low, input_bound_up = ensure_input_bounds(input_bound_low, input_bound_up, data)
 
     # TODO VB change here, the rest should work as is.
     # Consider the optimization of only computing a half of the matrix.
-    fill_count_tables_in_layer(data, modules_flat, count_tables, quantization_degree, input_bound_low, input_bound_up, verbose)
+    onehots = onehotcounts(data, modules_flat, quantization_degree, input_bound_low, input_bound_up)
 
-    qmin_tables = list(compute_qmin_tables(count_tables, len(data), quantization_degree))
+    qmin_tables = list(compute_qmin_tables([mutual_info(A,A) for A in onehots], len(data), quantization_degree))
 
     return qmin_tables

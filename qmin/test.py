@@ -73,19 +73,17 @@ def experiment_differeneces():
     q = 2
     # use_direct(True)
     utils.use_cuda()
-    model = torch.load("model_files/mice.pth").to(used_device())
-    qmins_dir, time_dir = test_mice(model, q)
+    model = torch.load("model_files/mice.pth", map_location=torch.device('cpu')).to(used_device())
+    qmins_dir = test_mice(model, q)
     df_dir = qmin.create_qmin_weights_dataframe(qmins_dir, model)
-    analyze_df(df_dir)
+    analyze_df(df_dir, qmins_dir)
 
     # use_direct(False)
     utils.use_cpu()
-    model = torch.load("model_files/mice.pth").to(used_device())
-    qmins_undir, time_undir = test_mice(model, q)
+    model = torch.load("model_files/mice.pth", map_location=torch.device('cpu')).to(used_device())
+    qmins_undir = test_mice(model, q)
     df_undir = qmin.create_qmin_weights_dataframe(qmins_undir, model)
-    analyze_df(df_undir)
-
-    print(f"Direct is {time_undir/time_dir} times faster.")
+    analyze_df(df_undir, qmins_undir)
 
     q_dir = df_dir.iloc[:, 0]
     q_undir = df_undir.iloc[:, 0]
@@ -99,7 +97,7 @@ computation_tester_map = {"neighbours": qmin.compute_neighbours_qmin, "in_layer"
 
 def load_or_compute_qmins(dataset: str, q: int, model_name: str = None, computation="neighbours") -> (nn.Module, list[torch.Tensor]):
     data_model_part = f"{dataset}" if model_name is None else f"{dataset}_{model_name}"
-    model = torch.load(f'./model_files/{data_model_part}.pth').to(used_device())
+    model = torch.load(f'./model_files/{data_model_part}.pth', map_location=torch.device("cpu")).to(used_device())
 
     qmins_path = f"./computed_data/qmins_{computation}_{data_model_part}_{q}_00.txt"
     if path.exists(qmins_path):
@@ -110,20 +108,7 @@ def load_or_compute_qmins(dataset: str, q: int, model_name: str = None, computat
     return model, qmins
 
 
-q = 2
-utils.use_cpu()
-
-# model, qmins = load_or_compute_qmins("mnist", q, "small")
-model, qmins = load_or_compute_qmins("mice", 2, computation="in_layer")
-
-df = qmin.create_qmin_weights_dataframe(qmins, model)
-analyze_df(df, qmins)
-print(df)
-
-
-print("DONE")
-
-# model = torch.load('./model_files/mnist_small.pth').to(used_device())
+# model = torch.load('./model_files/mnist_small.pth', map_location=torch.device('cpu')).to(used_device())
 # # qmins = torch.load(f"./computed_data/qmins_mnist_{q}_00.txt")
 # qmins = test_mnist(model, q, True)
 # torch.save(qmins, f"./computed_data/qmins_mnist_{q}_00.txt")
@@ -132,7 +117,7 @@ print("DONE")
 # qmins = test_mnist(model, q, True)
 # torch.save(qmins, f"./computed_data/qmins_mnist_{q}_00.txt")
 
-# experiment_differeneces()
+experiment_differeneces()
 
 # use_direct(True)
 
