@@ -17,19 +17,20 @@ from datasets.mnist_download import MNIST_local
 from models.mnist import MnistSmallNN
 
 
-def test_mice(model, q, verbose=True, computation=qmin.compute_neighbours_qmin) -> list[torch.Tensor]:
+def test_mice(model, q, pairlayers=qmin.neighbours) -> list[torch.Tensor]:
     training_data = MiceDataset(csv_file="datasets/mice/train.csv")
     # model = torch.load('model_files/mice.pth').to(used_device())
     # q = 2
     start = time.time()
-    qmin_table = computation(model, training_data, q, 0., 1.3, verbose)
+    with torch.no_grad():
+        qmin_table = qmin.compute_qmin(pairlayers, model, training_data, q)
     end = time.time()
     interval = end - start
     print(f"Computation time: {interval}.")
     return qmin_table
 
 
-def test_mnist(model, q, verbose=True, computation=qmin.compute_neighbours_qmin) -> list[torch.Tensor]:
+def test_mnist(model, q, verbose=True, pairlayers=qmin.neighbours) -> list[torch.Tensor]:
     training_data = MNIST_local(
         root="./datasets/mnist",
         train=True,
@@ -37,7 +38,8 @@ def test_mnist(model, q, verbose=True, computation=qmin.compute_neighbours_qmin)
         folder="./datasets/mnist_local"
     )
     start = time.time()
-    qmin_table = computation(model, training_data, q, 0., 1., verbose)
+    with torch.no_grad():
+        qmin_table = qmin.compute_qmin(pairlayers, model, training_data, q)
     end = time.time()
     interval = end - start
     print(f"Computation time: {interval}.")
@@ -92,7 +94,7 @@ def experiment_differeneces():
 
 
 dataset_tester_map = {"mice": test_mice, "mnist": test_mnist}
-computation_tester_map = {"neighbours": qmin.compute_neighbours_qmin, "in_layer": qmin.compute_in_layer_qmin}
+computation_tester_map = {"neighbours": qmin.neighbours, "in_layer": qmin.in_layer}
 
 
 def load_or_compute_qmins(dataset: str, q: int, model_name: str = None, computation="neighbours") -> (nn.Module, list[torch.Tensor]):
@@ -103,7 +105,7 @@ def load_or_compute_qmins(dataset: str, q: int, model_name: str = None, computat
     if path.exists(qmins_path):
         qmins = torch.load(qmins_path)
     else:
-        qmins = dataset_tester_map[dataset](model, q, computation=computation_tester_map[computation])
+        qmins = dataset_tester_map[dataset](model, q, pairlayers=computation_tester_map[computation])
         torch.save(qmins, qmins_path)
     return model, qmins
 
