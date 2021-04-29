@@ -3,7 +3,7 @@ import torch.nn.functional
 from torch import nn, FloatTensor
 from torch.nn.functional import one_hot
 from torch.utils.data import Dataset
-from typing import Callable, Iterator, Tuple
+from typing import Iterator, Tuple
 import pandas as pd
 
 
@@ -34,18 +34,14 @@ def create_qmin_weights_dataframe(qmins: list[torch.Tensor], model: nn.Module) -
                         columns=["QMIN", "Weights", "AbsWgs", "Layers"])
 
 
-neighbours = lambda onehots: zip(onehots, onehots[1:])
-in_layer = lambda onehots: zip(onehots, onehots)
-
-
-def compute_qmin(pairlayers: Callable, network: nn.Module, data: Dataset, q: int = 2) -> list[torch.Tensor]:
+def compute_qmin(network: nn.Module, data: Dataset, q: int = 2, layeroffset: int = 1) -> list[torch.Tensor]:
     """
     Computes list of Tensors of Quantized mutual information
     between same-layer neurons in respective layers.
-    :param pairlayers: What pairs of layers to compare activations for. neighbours and in_layer are implmented.
     :param network: The neural network, as a Pytorch module.
     :param data: The input dataset.
     :param q: The number of bins to quantize activations into, 2 by default.
+    :param layeroffset: Layers of what distance to compare, 1 by default.
     :return: The list of length (layer_count). Each component of the list is a square matrix
     of floats shaped: (layer_size[i] x layer_size[i]), containing the quantized mutual informations.
     """
@@ -70,5 +66,5 @@ def compute_qmin(pairlayers: Callable, network: nn.Module, data: Dataset, q: int
     # Consider the optimization of only computing a half of the matrix.
     input = torch.stack([X for X, _ in data])
     onehots = [one_hot(quantize(*ma).to(torch.int64).clamp(0,q-1)) for ma in iterate_layers(input)]
-    joint = [torch.tensordot(A,B,([0],[0])).div(input.shape[0]) for A,B in pairlayers(onehots)]
+    joint = [torch.tensordot(A,B,([0],[0])).div(len(input)) for A,B in zip(onehots,onehots[layeroffset:])]
     return [(j / j.sum(1, keepdim=True) / j.sum(3, keepdim=True)).pow(j).log2().sum((1,3)) for j in joint]
