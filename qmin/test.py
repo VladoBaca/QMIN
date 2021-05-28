@@ -4,6 +4,7 @@ from torch import nn
 import pandas as pd
 import matplotlib.pyplot as plt
 import time
+from datetime import datetime
 from os import path
 
 import qmin
@@ -76,18 +77,47 @@ def experiment_differeneces():
     utils.use_cpu()
     model = torch.load("model_files/mice.pth", map_location=torch.device('cpu')).to(used_device())
     qmins_dir = test_mice(model, q)
+
+    qmins_transposed = [qmins.transpose(0, 1) for qmins in qmins_dir]
+
+    df_dir = qmin.create_qmin_weights_dataframe(qmins_transposed, model)
+    analyze_df(df_dir, qmins_transposed)
+
+    # use_direct(False)
+    # utils.use_cpu()
+    # model = torch.load("model_files/mice.pth", map_location=torch.device('cpu')).to(used_device())
+    # qmins_undir = test_mice(model, q)
+    # df_undir = qmin.create_qmin_weights_dataframe(qmins_undir, model)
+    # analyze_df(df_undir, qmins_undir)
+
+    q_dir = df_dir.iloc[:, 0]
+    # q_undir = df_undir.iloc[:, 0]
+    print("Experiment finished")
+
+
+def images_original():
+    q = 2
+    # use_direct(True)
+    utils.use_cpu()
+    model = torch.load("model_files/mice.pth", map_location=torch.device('cpu')).to(used_device())
+
+    data_model_part = "mice"
+    qmins_original_path = f"E:/My Drive/AISC/qmin/qmin/computed_data/qmins_neighbours_{data_model_part}_{q}_00.txt"
+
+    qmins_dir = torch.load(qmins_original_path)
+
     df_dir = qmin.create_qmin_weights_dataframe(qmins_dir, model)
     analyze_df(df_dir, qmins_dir)
 
     # use_direct(False)
-    utils.use_cpu()
-    model = torch.load("model_files/mice.pth", map_location=torch.device('cpu')).to(used_device())
-    qmins_undir = test_mice(model, q)
-    df_undir = qmin.create_qmin_weights_dataframe(qmins_undir, model)
-    analyze_df(df_undir, qmins_undir)
+    # utils.use_cpu()
+    # model = torch.load("model_files/mice.pth", map_location=torch.device('cpu')).to(used_device())
+    # qmins_undir = test_mice(model, q)
+    # df_undir = qmin.create_qmin_weights_dataframe(qmins_undir, model)
+    # analyze_df(df_undir, qmins_undir)
 
     q_dir = df_dir.iloc[:, 0]
-    q_undir = df_undir.iloc[:, 0]
+    # q_undir = df_undir.iloc[:, 0]
     print("Experiment finished")
 
 
@@ -95,17 +125,90 @@ dataset_tester_map = {"mice": test_mice, "mnist": test_mnist}
 layeroffset_tester_map = {"neighbours": 1, "in_layer": 0}
 
 
-def load_or_compute_qmins(dataset: str, q: int, model_name: str = None, computation="neighbours") -> (nn.Module, list[torch.Tensor]):
+def load_or_compute_qmins(dataset: str, q: int, model_name: str = None, computation="neighbours",
+                          force_compute: bool = False) -> (nn.Module, list[torch.Tensor]):
     data_model_part = f"{dataset}" if model_name is None else f"{dataset}_{model_name}"
     model = torch.load(f'./model_files/{data_model_part}.pth', map_location=torch.device("cpu")).to(used_device())
 
     qmins_path = f"./computed_data/qmins_{computation}_{data_model_part}_{q}_00.txt"
-    if path.exists(qmins_path):
+    if (not force_compute) and path.exists(qmins_path):
         qmins = torch.load(qmins_path)
     else:
         qmins = dataset_tester_map[dataset](model, q, layeroffset=layeroffset_tester_map[computation])
+        qmins = [qmins_layer.transpose(0, 1) for qmins_layer in qmins]
         torch.save(qmins, qmins_path)
     return model, qmins
+
+
+def compare_results(dataset: str, q: int, model_name: str = None, computation="neighbours",
+                    force_compute: bool = False):
+    data_model_part = f"{dataset}" if model_name is None else f"{dataset}_{model_name}"
+    qmins_original_path = f"E:/My Drive/AISC/qmin/qmin/computed_data/qmins_{computation}_{data_model_part}_{q}_00.txt"
+
+    print(f"------ COMPARISON: {computation}_{data_model_part}_{q} ------")
+    start = time.time()
+    print(f"Start:              {datetime.fromtimestamp(start).strftime('%H:%M:%S')}")
+
+    qmins_original = torch.load(qmins_original_path)
+    (model, qmins_patched) = load_or_compute_qmins(dataset, q, model_name, computation, force_compute = force_compute)
+    differences = torch.cat([(layer_p - layer_o).abs().flatten()
+                             for (layer_p, layer_o)
+                             in zip(qmins_patched, qmins_original)])
+    mean_diff = differences.mean()
+    max_diff = differences.max()
+    mean_relative_diff = torch.cat([((layer_p - layer_o).abs() / torch.maximum(layer_o, layer_p)).flatten()
+                             for (layer_p, layer_o)
+                             in zip(qmins_patched, qmins_original)]).nan_to_num(0,0,0).mean()
+
+    end = time.time()
+    interval = end - start
+
+    print(f"End:                {datetime.fromtimestamp(end).strftime('%H:%M:%S')}")
+    print(f"Computation time:   {interval}.")
+    print()
+    print(f"Mean diff:          {mean_diff}")
+    print(f"Max diff:           {max_diff}")
+    print(f"Mean relative diff: {mean_relative_diff}")
+    print()
+    print()
+
+experiment_differeneces()
+
+print("DONE")
+
+
+images_original()
+
+print("DONE")
+
+
+compare_results("mice", 2, force_compute=True)
+compare_results("mice", 4, force_compute=True)
+compare_results("mice", 6, force_compute=True)
+compare_results("mice", 2, computation="in_layer", force_compute=True)
+compare_results("mnist", 2, "small", force_compute=True)
+compare_results("mnist", 4, "small", force_compute=True)
+compare_results("mnist", 2, "small", computation="in_layer", force_compute=True)
+
+
+print("DONE")
+
+
+# dataset = "mice"
+# model_name = None
+# computation="neighbours"
+# q = 2
+#
+#
+# q = 2
+# model = torch.load(f'./model_files/mice.pth', map_location=torch.device("cpu")).to(used_device())
+# qmins = test_mice(model, q)
+#
+# df = qmin.create_qmin_weights_dataframe(qmins, model)
+# analyze_df(df, qmins)
+#
+# print("Done")
+
 
 
 # model = torch.load('./model_files/mnist_small.pth', map_location=torch.device('cpu')).to(used_device())
@@ -117,7 +220,7 @@ def load_or_compute_qmins(dataset: str, q: int, model_name: str = None, computat
 # qmins = test_mnist(model, q, True)
 # torch.save(qmins, f"./computed_data/qmins_mnist_{q}_00.txt")
 
-experiment_differeneces()
+# experiment_differeneces()
 
 # use_direct(True)
 

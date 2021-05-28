@@ -7,6 +7,14 @@ from typing import Iterator, Tuple
 import pandas as pd
 
 
+def ensure_input_bounds(lo: float, hi: float, data: Dataset) -> (float, float):
+    if lo is None:
+        lo = min((X.min() for (X, _) in data)).item()
+    if hi is None:
+        hi = max((X.max() for (X, _) in data)).item()
+    return lo, hi
+
+
 def flatten_module(module: nn.Module) -> Iterator[nn.Module]:
     for child in module.children():
         if isinstance(child, nn.Sequential): yield from flatten_module(child)
@@ -34,7 +42,8 @@ def create_qmin_weights_dataframe(qmins: list[torch.Tensor], model: nn.Module) -
                         columns=["QMIN", "Weights", "AbsWgs", "Layers"])
 
 
-def compute_qmin(network: nn.Module, data: Dataset, q: int = 2, layeroffset: int = 1) -> list[torch.Tensor]:
+def compute_qmin(network: nn.Module, data: Dataset, q: int = 2, layeroffset: int = 1,
+                 lo: float = None, hi: float = None,) -> list[torch.Tensor]:
     """
     Computes list of Tensors of Quantized mutual information
     between same-layer neurons in respective layers.
@@ -42,19 +51,23 @@ def compute_qmin(network: nn.Module, data: Dataset, q: int = 2, layeroffset: int
     :param data: The input dataset.
     :param q: The number of bins to quantize activations into, 2 by default.
     :param layeroffset: Layers of what distance to compare, 1 by default.
+    :param lo: Optional, the lower bound on activations input neurons.
+    If not provided, minimum of inputs throughout all components of all input instances is used.
+    :param hi: Optional, the upper bound on activations input neurons.
+    If not provided, maximum of inputs throughout all components of all input instances is used.
     :return: The list of length (layer_count). Each component of the list is a square matrix
     of floats shaped: (layer_size[i] x layer_size[i]), containing the quantized mutual informations.
     """
 
-    lo = min((X.min() for X, _ in data)).item()
-    hi = max((X.max() for X, _ in data)).item()
+    lo, hi = ensure_input_bounds(lo, hi, data)
+
     def quantize(module: nn.Module, value: FloatTensor) -> FloatTensor:
         if module is None: return q * (value - lo) / (hi - lo)
         elif isinstance(module, nn.Sigmoid): return q * value
         elif isinstance(module, nn.ReLU): return value.ceil()
         else: raise TypeError(f"Modules of {type(module)} type are not allowed for quantization!")
 
-    def iterate_layers(x: FloatTensor) -> Iterator[Tuple[nn.Module,FloatTensor]]:
+    def iterate_layers(x: FloatTensor) -> Iterator[Tuple[nn.Module, FloatTensor]]:
         module_last = None
         for module in flatten_module(network):
             if isinstance(module, nn.Linear): yield module_last, x
@@ -67,4 +80,4 @@ def compute_qmin(network: nn.Module, data: Dataset, q: int = 2, layeroffset: int
     input = torch.stack([X for X, _ in data])
     onehots = [one_hot(quantize(*ma).to(torch.int64).clamp(0,q-1)) for ma in iterate_layers(input)]
     joint = [torch.tensordot(A,B,([0],[0])).div(len(input)) for A,B in zip(onehots,onehots[layeroffset:])]
-    return [(j / j.sum(1, keepdim=True) / j.sum(3, keepdim=True)).pow(j).log2().sum((1,3)) for j in joint]
+    return [(((j / j.sum(1, keepdim=True)) / j.sum(3, keepdim=True)).log2().nan_to_num(0, 0, 0) * j).sum((1,3)) for j in joint]
